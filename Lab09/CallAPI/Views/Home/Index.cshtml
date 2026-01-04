@@ -1,0 +1,203 @@
+﻿@using CallAPI.Models
+@model List<ProductViewModel>
+@{
+    ViewData["Title"] = "Product Management";
+    var categories = ViewBag.Categories as List<CategoryViewModel> ?? new();
+    var apiOrigin = "https://localhost:44354";
+}
+
+<div class="container mt-4">
+    <h2 class="mb-3">Product Management (AJAX + HttpClient demo)</h2>
+
+    <div id="notification" class="alert d-none" role="alert"></div>
+
+    <div class="card mb-4">
+        <div class="card-header">Create product (AJAX -> ProductApi)</div>
+        <div class="card-body">
+            <form id="productForm" enctype="multipart/form-data">
+                <div class="mb-3">
+                    <label class="form-label">Name</label>
+                    <input type="text" class="form-control" id="name" required />
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">Price</label>
+                    <input type="number" class="form-control" id="price" required />
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">Category</label>
+                    <select class="form-select" id="categoryId" required>
+                        <option value="">-- Select category --</option>
+                        @foreach (var cat in categories)
+                        {
+                            <option value="@cat.Id">@cat.Name</option>
+                        }
+                    </select>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">Image</label>
+                    <input type="file" class="form-control" id="image" accept="image/*" required />
+                </div>
+                <button type="submit" class="btn btn-primary">Create</button>
+            </form>
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-header">Product list (server render via HttpClient)</div>
+        <div class="card-body">
+            <table class="table table-bordered" id="productTable">
+                <thead>
+                    <tr>
+                        <th>ID</th>
+                        <th>Name</th>
+                        <th>Price</th>
+                        <th>Category</th>
+                        <th>Image</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="productTableBody">
+                    @foreach (var p in Model)
+                    {
+                        <tr data-id="@p.Id">
+                            <td>@p.Id</td>
+                            <td>@p.Name</td>
+                            <td>@p.Price</td>
+                            <td>@p.CategoryName</td>
+                            <td>
+                                @if (!string.IsNullOrEmpty(p.ImageUrl))
+                                {
+                                    var img = p.ImageUrl.StartsWith("http", StringComparison.OrdinalIgnoreCase)
+                                        ? p.ImageUrl
+                                        : $"{apiOrigin}{(p.ImageUrl.StartsWith("/") ? "" : "/")}{p.ImageUrl}";
+                                    <img src="@img" alt="@p.Name" style="width:80px;height:auto;" />
+                                }
+                            </td>
+                            <td>
+                                <button class="btn btn-sm btn-danger" onclick="deleteProduct(@p.Id)">Delete</button>
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+@section Scripts {
+    <script>
+        const apiBase = "https://localhost:44354/api";
+        const apiOrigin = "https://localhost:44354"; // phục vụ ảnh
+
+        const notification = document.getElementById("notification");
+        const productTableBody = document.getElementById("productTableBody");
+
+        document.addEventListener("DOMContentLoaded", () => {
+            loadCategories(); // refresh dropdown via AJAX
+            document.getElementById("productForm").addEventListener("submit", submitForm);
+            loadProducts(); // refresh list via AJAX
+        });
+
+        async function submitForm(e) {
+            e.preventDefault();
+            const formData = new FormData();
+            formData.append("name", document.getElementById("name").value);
+            formData.append("price", document.getElementById("price").value);
+            formData.append("categoryId", document.getElementById("categoryId").value);
+            const fileInput = document.getElementById("image");
+            if (fileInput.files.length > 0) {
+                formData.append("image", fileInput.files[0]);
+            }
+
+            try {
+                const res = await fetch(`${apiBase}/products`, {
+                    method: "POST",
+                    body: formData
+                });
+                if (!res.ok) {
+                    const err = await res.json();
+                    showMessage(err.message || "Create failed", "danger");
+                    return;
+                }
+                showMessage("Created successfully", "success");
+                document.getElementById("productForm").reset();
+                loadProducts();
+            } catch (err) {
+                showMessage(err.message, "danger");
+            }
+        }
+
+        async function loadProducts() {
+            try {
+                const res = await fetch(`${apiBase}/products`);
+                const data = await res.json();
+                renderProducts(data);
+            } catch (err) {
+                showMessage("Cannot load products", "danger");
+            }
+        }
+
+        function renderProducts(products) {
+            productTableBody.innerHTML = "";
+            products.forEach(p => {
+                const row = document.createElement("tr");
+                row.setAttribute("data-id", p.id);
+                row.innerHTML = `
+                    <td>${p.id}</td>
+                    <td>${p.name}</td>
+                    <td>${p.price}</td>
+                    <td>${p.categoryName ?? ""}</td>
+                    <td>${p.imageUrl ? `<img src="${resolveImage(p.imageUrl)}" style="width:80px;height:auto;" />` : ""}</td>
+                    <td><button class="btn btn-sm btn-danger" onclick="deleteProduct(${p.id})">Delete</button></td>
+                `;
+                productTableBody.appendChild(row);
+            });
+        }
+
+        function resolveImage(url) {
+            if (!url) return "";
+            if (url.startsWith("http")) return url;
+            const normalized = url.startsWith("/") ? url : `/${url}`;
+            return `${apiOrigin}${normalized}`;
+        }
+
+        async function loadCategories() {
+            try {
+                const res = await fetch(`${apiBase}/categories`);
+                const cats = await res.json();
+                const select = document.getElementById("categoryId");
+                select.innerHTML = `<option value="">-- Select category --</option>`;
+                cats.forEach(c => {
+                    const opt = document.createElement("option");
+                    opt.value = c.id;
+                    opt.textContent = c.name;
+                    select.appendChild(opt);
+                });
+            } catch {
+                // ignore
+            }
+        }
+
+        async function deleteProduct(id) {
+            if (!confirm("Delete this product?")) return;
+            try {
+                const res = await fetch(`${apiBase}/products/${id}`, { method: "DELETE" });
+                if (res.ok) {
+                    showMessage("Deleted", "success");
+                    loadProducts();
+                } else {
+                    showMessage("Delete failed", "danger");
+                }
+            } catch {
+                showMessage("Delete failed", "danger");
+            }
+        }
+
+        function showMessage(msg, type) {
+            notification.classList.remove("d-none", "alert-success", "alert-danger");
+            notification.classList.add(`alert-${type}`);
+            notification.textContent = msg;
+            setTimeout(() => notification.classList.add("d-none"), 4000);
+        }
+    </script>
+}
